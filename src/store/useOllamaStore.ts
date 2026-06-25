@@ -8,11 +8,19 @@ export interface AppMessage extends ChatMessage {
   images?: string[];
 }
 
+export interface MemoryItem {
+  id: string;
+  content: string;
+  source: 'user' | 'auto';
+}
+
 export interface ChatSession {
   id: string;
   title: string;
   messages: AppMessage[];
   updatedAt: number;
+  memoryEnabled?: boolean;
+  memories?: MemoryItem[];
 }
 
 interface OllamaState {
@@ -40,6 +48,11 @@ interface OllamaState {
   loadSession: (id: string) => void;
   deleteSession: (id: string) => void;
   
+  toggleMemory: (sessionId: string) => void;
+  addMemory: (sessionId: string, content: string, source: 'user' | 'auto') => void;
+  updateMemory: (sessionId: string, memoryId: string, content: string) => void;
+  deleteMemory: (sessionId: string, memoryId: string) => void;
+
   initPolling: () => void;
   requestRunModel: (modelName: string) => void;
   confirmRunModel: () => Promise<void>;
@@ -107,7 +120,9 @@ export const useOllamaStore = create<OllamaState>()(
           id: Date.now().toString(),
           title: 'Percakapan Baru',
           messages: [],
-          updatedAt: Date.now()
+          updatedAt: Date.now(),
+          memoryEnabled: false,
+          memories: []
         };
         set((state) => ({
           sessions: [newSession, ...state.sessions],
@@ -132,7 +147,9 @@ export const useOllamaStore = create<OllamaState>()(
                 id: Date.now().toString(),
                 title: 'Percakapan Baru',
                 messages: [],
-                updatedAt: Date.now()
+                updatedAt: Date.now(),
+                memoryEnabled: false,
+                memories: []
               };
               newSessions.push(fresh);
               newCurrentId = fresh.id;
@@ -140,6 +157,60 @@ export const useOllamaStore = create<OllamaState>()(
           }
           return { sessions: newSessions, currentSessionId: newCurrentId };
         });
+      },
+
+      toggleMemory: (sessionId: string) => {
+        set((state) => ({
+          sessions: state.sessions.map(s =>
+            s.id === sessionId ? { ...s, memoryEnabled: !s.memoryEnabled } : s
+          )
+        }));
+      },
+
+      addMemory: (sessionId: string, content: string, source: 'user' | 'auto') => {
+        set((state) => ({
+          sessions: state.sessions.map(s => {
+            if (s.id === sessionId) {
+              const newMemory: MemoryItem = {
+                id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+                content,
+                source
+              };
+              return { ...s, memories: [...(s.memories || []), newMemory] };
+            }
+            return s;
+          })
+        }));
+      },
+
+      updateMemory: (sessionId: string, memoryId: string, content: string) => {
+        set((state) => ({
+          sessions: state.sessions.map(s => {
+            if (s.id === sessionId) {
+              return {
+                ...s,
+                memories: (s.memories || []).map(m =>
+                  m.id === memoryId ? { ...m, content } : m
+                )
+              };
+            }
+            return s;
+          })
+        }));
+      },
+
+      deleteMemory: (sessionId: string, memoryId: string) => {
+        set((state) => ({
+          sessions: state.sessions.map(s => {
+            if (s.id === sessionId) {
+              return {
+                ...s,
+                memories: (s.memories || []).filter(m => m.id !== memoryId)
+              };
+            }
+            return s;
+          })
+        }));
       },
 
       requestRunModel: (modelName: string) => {
@@ -238,7 +309,9 @@ export const useOllamaStore = create<OllamaState>()(
               id: activeSessionId,
               title: 'Percakapan Baru',
               messages: [],
-              updatedAt: Date.now()
+              updatedAt: Date.now(),
+              memoryEnabled: false,
+              memories: []
             }, ...sessions],
             currentSessionId: activeSessionId
           });
@@ -285,6 +358,19 @@ export const useOllamaStore = create<OllamaState>()(
           return chatMsg;
         });
 
+        // === MEMORY INJECTION ===
+        if (activeSession?.memoryEnabled && activeSession.memories && activeSession.memories.length > 0) {
+          const memoryContext = activeSession.memories.map(m => m.content).join('\n');
+          historyForApi = [
+            {
+              role: 'system',
+              content: `Gunakan informasi berikut dari percakapan sebelumnya jika relevan:\nMemori:\n${memoryContext}`
+            },
+            ...historyForApi
+          ];
+        }
+        // === END MEMORY INJECTION ===
+
         // === RAG INJECTION ===
         const ragStore = useRagStore.getState();
         if (ragStore.isRagEnabled) {
@@ -319,11 +405,32 @@ export const useOllamaStore = create<OllamaState>()(
                 role: 'assistant',
                 content: streamingText
               };
-              set((state) => ({ 
-                sessions: state.sessions.map(s => s.id === activeSessionId ? { ...s, messages: [...s.messages, assistantMessage], updatedAt: Date.now() } : s),
-                isGenerating: false,
-                streamingText: ''
-              }));
+              set((state) => {
+                const currentSession = state.sessions.find(s => s.id === activeSessionId);
+                const updatedSessions = state.sessions.map(s => s.id === activeSessionId ? { ...s, messages: [...s.messages, assistantMessage], updatedAt: Date.now() } : s);
+
+                // Auto-save brief memory
+                if (currentSession?.memoryEnabled) {
+                   const autoMemoryText = `User: ${content} | Ning: ${streamingText.slice(0, 50)}...`;
+                   const newMemory: MemoryItem = {
+                     id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+                     content: autoMemoryText,
+                     source: 'auto'
+                   };
+                   const finalSessions = updatedSessions.map(s => s.id === activeSessionId ? { ...s, memories: [...(s.memories || []), newMemory] } : s);
+                   return {
+                     sessions: finalSessions,
+                     isGenerating: false,
+                     streamingText: ''
+                   };
+                }
+
+                return {
+                  sessions: updatedSessions,
+                  isGenerating: false,
+                  streamingText: ''
+                };
+              });
             } else {
               set({ isGenerating: false });
             }

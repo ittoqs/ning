@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { Send, Paperclip, Zap, User, Bot, Loader2, Copy, Edit3, Download, Sliders, X } from 'lucide-react'
 import { useOllamaStore } from '../store/useOllamaStore'
 import { CustomizeModal } from './CustomizeModal'
+import { MemoryPopover } from './MemoryPopover'
 import { useRagStore } from '../store/useRagStore'
 import { useLanguageStore } from '../store/useLanguageStore'
 import { useTranslation } from '../hooks/useTranslation'
@@ -112,6 +113,7 @@ export function ChatArea() {
         </div>
 
         <div className="flex items-center gap-4">
+          <MemoryPopover />
           <button
             onClick={toggleLanguage}
             className="px-3 py-1 font-medium border border-border rounded hover:bg-white/5 transition-colors text-textMuted hover:text-textMain text-sm"
